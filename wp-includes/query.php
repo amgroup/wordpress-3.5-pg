@@ -2,8 +2,8 @@
 /**
  * WordPress Query API
  *
- * The query API attempts to get which part of WordPress to the user is on. It
- * also provides functionality to getting URL query information.
+ * The query API attempts to get which part of WordPress the user is on. It
+ * also provides functionality for getting URL query information.
  *
  * @link http://codex.wordpress.org/The_Loop More information on The Loop.
  *
@@ -739,11 +739,6 @@ function is_main_query() {
  */
 function have_posts() {
 	global $wp_query;
-        /*
-        echo '<pre>';
-        print_r($wp_query);
-        echo '</pre>';
-        */
 	return $wp_query->have_posts();
 }
 
@@ -1410,8 +1405,8 @@ class WP_Query {
 				$array[$key] = '';
 		}
 
-		$array_keys = array('category__in', 'category__not_in', 'category__and', 'post__in', 'post__not_in',
-			'tag__in', 'tag__not_in', 'tag__and', 'tag_slug__in', 'tag_slug__and');
+		$array_keys = array( 'category__in', 'category__not_in', 'category__and', 'post__in', 'post__not_in',
+			'tag__in', 'tag__not_in', 'tag__and', 'tag_slug__in', 'tag_slug__and', 'post_parent__in', 'post_parent__not_in' );
 
 		foreach ( $array_keys as $key ) {
 			if ( !isset($array[$key]) )
@@ -2085,7 +2080,7 @@ class WP_Query {
 		if ( $q['day'] )
 			$where .= " AND DAYOFMONTH($wpdb->posts.post_date)='" . $q['day'] . "'";
 
-		// If we've got a post_type AND its not "any" post_type.
+		// If we've got a post_type AND it's not "any" post_type.
 		if ( !empty($q['post_type']) && 'any' != $q['post_type'] ) {
 			foreach ( (array)$q['post_type'] as $_post_type ) {
 				$ptype_obj = get_post_type_object($_post_type);
@@ -2174,8 +2169,15 @@ class WP_Query {
 			$where .= " AND {$wpdb->posts}.\"ID\" NOT IN ($post__not_in)";
 		}
 
-		if ( is_numeric($q['post_parent']) )
+		if ( is_numeric( $q['post_parent'] ) ) {
 			$where .= $wpdb->prepare( " AND $wpdb->posts.post_parent = %d ", $q['post_parent'] );
+		} elseif ( $q['post_parent__in'] ) {
+			$post_parent__in = implode( ',', array_map( 'absint', $q['post_parent__in'] ) );
+			$where .= " AND {$wpdb->posts}.post_parent IN ($post_parent__in)";
+		} elseif ( $q['post_parent__not_in'] ) {
+			$post_parent__not_in = implode( ',',  array_map( 'absint', $q['post_parent__not_in'] ) );
+			$where .= " AND {$wpdb->posts}.post_parent NOT IN ($post_parent__not_in)";
+		}
 
 		if ( $q['page_id'] ) {
 			if  ( ('page' != get_option('show_on_front') ) || ( $q['page_id'] != get_option('page_for_posts') ) ) {
@@ -2185,7 +2187,9 @@ class WP_Query {
 		}
 
 		// If a search pattern is specified, load the posts that match
-		$tsq = '';
+//		$tsq = '';
+//		$tsv_orderby = '';
+
 		if ( !empty($q['s']) ) {
 			// added slashes screw with quote grouping when done early, so done later
 			$q['s'] = stripslashes($q['s']);
@@ -2197,8 +2201,8 @@ class WP_Query {
 				preg_match_all('/".*?("|$)|((?<=[\r\n\t ",+])|^)[^\r\n\t ",+]+/', $q['s'], $matches);
 				$q['search_terms'] = array_map('_search_terms_tidy', $matches[0]);
 			}
-			$tsq     = "to_tsquery('russian', fn.query2tsvector('" . implode( ' ', $q['search_terms'] ) . "'))";
-			$search .= "$wpdb->posts.tsv @@ $tsq";
+//			$tsq     = "to_tsquery('russian', fn.query2tsvector('" . implode( ' ', $q['search_terms'] ) . "'))";
+//			$search .= "$wpdb->posts.tsv @@ $tsq";
 
 			if ( !empty($search) ) {
 				$search = " AND ({$search}) ";
@@ -2232,6 +2236,8 @@ class WP_Query {
 				}
 				if ( ! $post_type )
 					$post_type = 'any';
+				elseif ( count( $post_type ) == 1 )
+					$post_type = $post_type[0];
 
 				$post_status_join = true;
 			} elseif ( in_array('attachment', (array) $post_type) ) {
@@ -2258,25 +2264,30 @@ class WP_Query {
 				}
 
 				$cat_query = wp_list_filter( $tax_query_in_and, array( 'taxonomy' => 'category' ) );
-				if ( !empty( $cat_query ) ) {
+				if ( ! empty( $cat_query ) ) {
 					$cat_query = reset( $cat_query );
-					$the_cat = get_term_by( $cat_query['field'], $cat_query['terms'][0], 'category' );
-					if ( $the_cat ) {
-						$this->set( 'cat', $the_cat->term_id );
-						$this->set( 'category_name', $the_cat->slug );
+
+					if ( ! empty( $cat_query['terms'][0] ) ) {
+						$the_cat = get_term_by( $cat_query['field'], $cat_query['terms'][0], 'category' );
+						if ( $the_cat ) {
+							$this->set( 'cat', $the_cat->term_id );
+							$this->set( 'category_name', $the_cat->slug );
+						}
+						unset( $the_cat );
 					}
-					unset( $the_cat );
 				}
 				unset( $cat_query );
 
 				$tag_query = wp_list_filter( $tax_query_in_and, array( 'taxonomy' => 'post_tag' ) );
-				if ( !empty( $tag_query ) ) {
+				if ( ! empty( $tag_query ) ) {
 					$tag_query = reset( $tag_query );
-					$the_tag = get_term_by( $tag_query['field'], $tag_query['terms'][0], 'post_tag' );
-					if ( $the_tag ) {
-						$this->set( 'tag_id', $the_tag->term_id );
+
+					if ( ! empty( $tag_query['terms'][0] ) ) {
+						$the_tag = get_term_by( $tag_query['field'], $tag_query['terms'][0], 'post_tag' );
+						if ( $the_tag )
+							$this->set( 'tag_id', $the_tag->term_id );
+						unset( $the_tag );
 					}
-					unset( $the_tag );
 				}
 				unset( $tag_query );
 			}
@@ -2345,6 +2356,8 @@ class WP_Query {
 			$orderby = '';
 		} elseif ( $q['orderby'] == 'post__in' && ! empty( $post__in ) ) {
 			$orderby = "FIELD( {$wpdb->posts}.\"ID\", $post__in )";
+		} elseif ( $q['orderby'] == 'post_parent__in' && ! empty( $post_parent__in ) ) {
+			$orderby = "FIELD( {$wpdb->posts}.post_parent, $post_parent__in )";
 		} else {
 			// Used to filter values
 			$allowed_keys = array('name', 'author', 'date', 'title', 'modified', 'menu_order', 'parent', 'ID', 'rand', 'comment_count');
@@ -2355,9 +2368,6 @@ class WP_Query {
 			}
 			$q['orderby'] = urldecode($q['orderby']);
 			$q['orderby'] = addslashes_gpc($q['orderby']);
-
-			$orderby_array = array();
-			$tsv_orderby   = '';
 
 			if ( !empty($q['s']) ) {
 				// added slashes screw with quote grouping when done early, so done later
@@ -2370,8 +2380,10 @@ class WP_Query {
 					preg_match_all('/".*?("|$)|((?<=[\r\n\t ",+])|^)[^\r\n\t ",+]+/', $q['s'], $matches);
 					$q['search_terms'] = array_map('_search_terms_tidy', $matches[0]);
 				}
-				$tsv_orderby = "(1 - ts_rank( $wpdb->posts.tsv, to_tsquery('russian', fn.query2tsvector('" . implode( ' ', $q['search_terms'] ) . "'))))";
+//				$tsv_orderby = "(1 - ts_rank( $wpdb->posts.tsv, to_tsquery('russian', fn.query2tsvector('" . implode( ' ', $q['search_terms'] ) . "'))))";
 			}
+
+			$orderby_array = array();
 			foreach ( explode( ' ', $q['orderby'] ) as $i => $orderby ) {
 				// Only allow certain values for safety
 				if ( ! in_array($orderby, $allowed_keys) )
@@ -2392,7 +2404,7 @@ class WP_Query {
 						$orderby = "$wpdb->postmeta.meta_value";
 						break;
 					case 'meta_value_num':
-						$orderby = "$wpdb->postmeta.meta_value::numeric";
+						$orderby = "date_trunc('month',$wpdb->posts.post_date)";//$wpdb->postmeta.meta_value::numeric";
 						break;
 					case 'comment_count':
 						$orderby = "$wpdb->posts.comment_count";
@@ -2411,9 +2423,11 @@ class WP_Query {
 				$orderby .= " {$q['order']}";
 		}
 
-		if ( is_array( $post_type ) ) {
+		if ( is_array( $post_type ) && count( $post_type ) > 1 ) {
 			$post_type_cap = 'multiple_post_type';
 		} else {
+			if ( is_array( $post_type ) )
+				$post_type = reset( $post_type );
 			$post_type_object = get_post_type_object( $post_type );
 			if ( empty( $post_type_object ) )
 				$post_type_cap = $post_type;
@@ -2439,14 +2453,13 @@ class WP_Query {
 			$post_type_object = get_post_type_object ( 'post' );
 		}
 
+		$edit_cap = 'edit_post';
+		$read_cap = 'read_post';
+
 		if ( ! empty( $post_type_object ) ) {
-			$edit_cap = $post_type_object->cap->edit_post;
-			$read_cap = $post_type_object->cap->read_post;
 			$edit_others_cap = $post_type_object->cap->edit_others_posts;
 			$read_private_cap = $post_type_object->cap->read_private_posts;
 		} else {
-			$edit_cap = 'edit_' . $post_type_cap;
-			$read_cap = 'read_' . $post_type_cap;
 			$edit_others_cap = 'edit_others_' . $post_type_cap . 's';
 			$read_private_cap = 'read_private_' . $post_type_cap . 's';
 		}
@@ -2596,6 +2609,13 @@ class WP_Query {
 
 		$pieces = array( 'where', 'groupby', 'join', 'orderby', 'distinct', 'fields', 'limits' );
 
+		// Ranking full text search
+		if($q['s']) {
+			$fields  = "ts_rank( $wpdb->posts.tsv, to_tsquery('russian', fn.query2tsvector('" . implode( ' ', $q['search_terms'] ) . "')))," . $fields;
+			$where   .= "AND $wpdb->posts.tsv @@ to_tsquery('russian', fn.query2tsvector('" . implode( ' ', $q['search_terms'] ) . "')) ";
+			$orderby = "ts_rank( $wpdb->posts.tsv, to_tsquery('russian', fn.query2tsvector('" . implode( ' ', $q['search_terms'] ) . "'))) DESC" . ($orderby ? ','.$orderby : '');
+		}
+		
 		// Apply post-paging filters on where and join. Only plugins that
 		// manipulate paging queries should use these hooks.
 		if ( !$q['suppress_filters'] ) {
@@ -2632,14 +2652,14 @@ class WP_Query {
 				$$piece = isset( $clauses[ $piece ] ) ? $clauses[ $piece ] : '';
 		}
 
+
 		$found_rows = '';
 		if ( !$q['no_found_rows'] && !empty($limits) )
 			$found_rows = 'SQL_CALC_FOUND_ROWS';
 
-		$this->request = $old_request = "SELECT $distinct $fields FROM $wpdb->posts $join WHERE 1=1 $where " . ($groupby ? ' GROUP BY ' . $groupby : '') . " " . ($orderby ? ' ORDER BY ' . $orderby : '') . " $limits";
+		$this->request = $old_request = "SELECT $distinct $fields FROM $wpdb->posts $join WHERE true $where " . ($groupby ? ' GROUP BY ' . $groupby : '') . " " . ($orderby ? ' ORDER BY ' . $orderby : '') . " $limits";
                 
-                $request_for_count =  "SELECT COUNT(*) FROM (SELECT \"ID\" FROM $wpdb->posts $join WHERE 1=1 $where GROUP BY \"ID\") AS tmp_tbl";   
-                //echo $request_for_count;
+                $request_for_count =  "SELECT COUNT(*) FROM (SELECT \"ID\" FROM $wpdb->posts $join WHERE true $where GROUP BY \"ID\") AS tmp_tbl";   
                 
 		if ( !$q['suppress_filters'] ) {
 			$this->request = apply_filters_ref_array( 'posts_request', array( $this->request, &$this ) );
@@ -2673,11 +2693,11 @@ class WP_Query {
                         if (!empty($groupby) && !empty($orderby)){
                             //postgreSQL ----
                             $this->request = "
-                                    SELECT DISTINCT $wpdb->posts.\"ID\"" . ($tsv_orderby ? ','.$tsv_orderby : '') . "" . ($orderby ? ','.preg_replace( '/(DESC|ASC)/i','',$orderby) : '') . "
+                                    SELECT DISTINCT $wpdb->posts.\"ID\"" . ($orderby ? ','.preg_replace( '/(DESC|ASC)/i','',$orderby) : '') . "
                                         FROM $wpdb->posts
                                         $join
                                         WHERE true $where 
-                                        " . (($orderby or $tsv_orderby) ? ' ORDER BY ' . ($tsv_orderby ? $tsv_orderby.',' : '') . $orderby : '') . " $limits";
+                                        " . (($orderby) ? ' ORDER BY ' . $orderby : '') . " $limits";
                             // -----------------------
                         } else {
                             $this->request = "SELECT $distinct $wpdb->posts.\"ID\" FROM $wpdb->posts $join WHERE true $where " . ($orderby ? ' ORDER BY ' . $orderby : '') . " $limits";
@@ -2829,7 +2849,7 @@ class WP_Query {
 	function set_found_posts( $q, $limits, $request_for_count = null ) {
 		global $wpdb;
 
-		// Bail if posts is an empty array. Continue if posts is an empty string
+		// Bail if posts is an empty array. Continue if posts is an empty string,
 		// null, or false to accommodate caching plugins that fill posts later.
 		if ( $q['no_found_rows'] || ( is_array( $this->posts ) && ! $this->posts ) )
 			return;
@@ -3653,7 +3673,7 @@ function wp_old_slug_redirect() {
  * @uses do_action_ref_array() Calls 'the_post'
  * @return bool True when finished.
  */
-function setup_postdata($post) {
+function setup_postdata( $post ) {
 	global $id, $authordata, $currentday, $currentmonth, $page, $pages, $multipage, $more, $numpages;
 
 	$id = (int) $post->ID;
@@ -3663,24 +3683,28 @@ function setup_postdata($post) {
 	$currentday = mysql2date('d.m.y', $post->post_date, false);
 	$currentmonth = mysql2date('m', $post->post_date, false);
 	$numpages = 1;
+	$multipage = 0;
 	$page = get_query_var('page');
-	if ( !$page )
+	if ( ! $page )
 		$page = 1;
 	if ( is_single() || is_page() || is_feed() )
 		$more = 1;
 	$content = $post->post_content;
-	if ( strpos( $content, '<!--nextpage-->' ) ) {
+	if ( false !== strpos( $content, '<!--nextpage-->' ) ) {
 		if ( $page > 1 )
 			$more = 1;
-		$multipage = 1;
-		$content = str_replace("\n<!--nextpage-->\n", '<!--nextpage-->', $content);
-		$content = str_replace("\n<!--nextpage-->", '<!--nextpage-->', $content);
-		$content = str_replace("<!--nextpage-->\n", '<!--nextpage-->', $content);
+		$content = str_replace( "\n<!--nextpage-->\n", '<!--nextpage-->', $content );
+		$content = str_replace( "\n<!--nextpage-->", '<!--nextpage-->', $content );
+		$content = str_replace( "<!--nextpage-->\n", '<!--nextpage-->', $content );
+		// Ignore nextpage at the beginning of the content.
+		if ( 0 === strpos( $content, '<!--nextpage-->' ) )
+			$content = substr( $content, 15 );
 		$pages = explode('<!--nextpage-->', $content);
 		$numpages = count($pages);
+		if ( $numpages > 1 )
+			$multipage = 1;
 	} else {
 		$pages = array( $post->post_content );
-		$multipage = 0;
 	}
 
 	do_action_ref_array('the_post', array(&$post));
